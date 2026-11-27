@@ -1,0 +1,2 @@
+// Windows: the program icon (generated from icon.png by scripts/icon_to_c.py). Explorer and SDL use the first icon.
+1 ICON "sbpc.ico"

@@ -1,0 +1,3 @@
+This file turns on portable mode: SBPC keeps its recompiled games, settings and logs
+in the "data" folder next to sbpc.exe instead of %APPDATA%\SBPC.
+Delete it to use %APPDATA%\SBPC instead.

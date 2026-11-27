@@ -1,0 +1,6 @@
+[submodule "third_party/SDL"]
+	path = libs/SDL
+	url = https://github.com/libsdl-org/SDL.git
+[submodule "third_party/tinycc"]
+	path = libs/tinycc
+	url = https://github.com/TinyCC/tinycc.git

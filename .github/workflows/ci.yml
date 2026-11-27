@@ -1,0 +1,74 @@
+name: CI
+
+# Builds and tests SBPC on Linux (gcc, clang, and without SDL) and Windows (MSVC). No game data is
+# needed or used: the tests use hand-made and randomly generated SH-2 programs, synthetic discs and
+# synthetic compressed data. The `tcc` test builds generated code with the bundled TinyCC (sbpc-tcc)
+# into a real .dll/.so and loads it, exactly like Build & Play; `cli_help` and `cli_scan_empty` start
+# the real executable.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: program
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [linux-release, linux-clang, linux-nosdl]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: SDL build dependencies
+        if: matrix.preset != 'linux-nosdl'
+        run: |
+          sudo apt-get update
+          # SDL's documented list (libs/SDL/docs/README-linux.md, Ubuntu): without libxtst-dev, configure failed
+          sudo apt-get install -y ninja-build libasound2-dev libpulse-dev libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+            libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libdbus-1-dev \
+            libibus-1.0-dev libudev-dev libpipewire-0.3-dev libwayland-dev libdecor-0-dev wayland-protocols
+      - name: Ninja
+        if: matrix.preset == 'linux-nosdl'
+        run: sudo apt-get install -y ninja-build
+      # Warnings are shown but not yet fatal on Linux: switch to -DSBPC_WERROR=ON once a run is clean.
+      - run: cmake --preset ${{ matrix.preset }}
+      - run: cmake --build --preset ${{ matrix.preset }}
+      - run: ctest --preset ${{ matrix.preset }}
+      - name: Test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.preset }}
+          path: |
+            program/build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
+            program/build/${{ matrix.preset }}/t_tcc/*.log
+          if-no-files-found: ignore
+
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: program
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      # MSVC /W4 is verified clean, so warnings fail the build here.
+      - run: cmake --preset windows-msvc -DSBPC_WERROR=ON
+      - run: cmake --build --preset windows-msvc
+      - run: ctest --preset windows-msvc
+      - name: Test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-windows-msvc
+          path: |
+            program/build/windows-msvc/Testing/Temporary/LastTest.log
+            program/build/windows-msvc/t_tcc/*.log
+          if-no-files-found: ignore

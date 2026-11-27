@@ -1,0 +1,144 @@
+name: Release
+
+# Builds every release download on GitHub's machines and attaches them to the release:
+#   SBPC-<version>-windows-x64.zip            data in %APPDATA%\SBPC
+#   SBPC-<version>-windows-x64-portable.zip   with portable.txt: data next to sbpc.exe
+#   SBPC-<version>-x86_64.AppImage            Linux, glibc 2.35+ (built on Ubuntu 22.04)
+#   SHA256SUMS.txt                            checksums of the three
+# Runs when a v* tag is pushed (the release is created if it doesn't exist yet: a full release for a plain
+# version tag like v0.1.0, a pre-release for one with a suffix like v0.2.0-rc1), or by
+# hand from Actions: with a tag, it rebuilds that tag's downloads; without one, it only builds (a test
+# run: the files are kept as workflow artifacts and nothing is published). By hand, this workflow file
+# comes from the branch it's started on and the source from the tag. No game data is ever involved.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build and attach to (e.g. v0.1.0). Empty: test build, nothing published'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  # the release tag, empty for a test build (by hand, no tag)
+  TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || (github.event_name == 'push' && github.ref_name || '') }}
+  SRC: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SRC }}
+          submodules: recursive
+      - name: Build and test
+        working-directory: program
+        # The C runtime is linked in (MultiThreaded), so players don't need the Visual C++ runtime.
+        run: |
+          cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DSBPC_WERROR=ON -DSBPC_COPY_TO_SOURCE=OFF -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build build/release --config Release
+          ctest --test-dir build/release -C Release --output-on-failure
+      - name: Zips
+        shell: bash
+        run: |
+          V="${TAG#v}"; [ -n "$V" ] || V="0.0.0-test"
+          python program/scripts/package_windows.py program/build/release/Release "$V" dist
+      - name: Smoke test
+        shell: bash
+        run: |
+          cd dist
+          for z in *.zip; do 7z x -y -o"t_${z%.zip}" "$z" > /dev/null; done
+          for d in t_*/*/; do
+            "$d/sbpc-cli.exe" --cli info | head -3
+          done
+          ls t_*-portable/*/portable.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SRC }}
+          submodules: recursive
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build python3 libasound2-dev libpulse-dev libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+            libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libdbus-1-dev \
+            libibus-1.0-dev libudev-dev libpipewire-0.3-dev libwayland-dev libdecor-0-dev wayland-protocols
+      - name: Build and test
+        working-directory: program
+        run: |
+          cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DSBPC_COPY_TO_SOURCE=OFF
+          cmake --build build/release
+          ctest --test-dir build/release --output-on-failure
+      - name: AppDir
+        run: |
+          B=program/build/release
+          D=AppDir
+          mkdir -p $D/usr/bin $D/usr/share/doc/sbpc/licenses
+          # Linux has no separate sbpc-cli (that's a Windows console twin): sbpc itself takes --cli
+          cp $B/sbpc $B/sbpc-tcc $D/usr/bin/
+          cp -r $B/tcc $D/usr/bin/
+          cp LICENSE $D/usr/share/doc/sbpc/
+          cp libs/SDL/LICENSE.txt $D/usr/share/doc/sbpc/licenses/SDL3-LICENSE.txt
+          cp libs/tinycc/COPYING $D/usr/share/doc/sbpc/licenses/TinyCC-COPYING
+          cp libs/half-eighties/OFL.txt $D/usr/share/doc/sbpc/licenses/HalfEighties-OFL.txt
+          python3 program/scripts/icon_to_c.py program/res/icon.png "$RUNNER_TEMP" $D/sbpc.png
+          printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=SBPC' \
+            'Comment=Saturn Bomberman recompiled for PC (bring your own disc)' \
+            'Exec=sbpc' 'Icon=sbpc' 'Categories=Game;' 'Terminal=false' > $D/sbpc.desktop
+          ln -s usr/bin/sbpc $D/AppRun
+      - name: AppImage
+        run: |
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          V="${TAG#v}"; [ -n "$V" ] || V="0.0.0-test"
+          mkdir -p dist
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool-x86_64.AppImage AppDir "dist/SBPC-$V-x86_64.AppImage"
+      - name: Smoke test
+        run: |
+          A=$(ls dist/*.AppImage)
+          chmod +x "$A"
+          APPIMAGE_EXTRACT_AND_RUN=1 "$A" --cli help | head -5
+          APPIMAGE_EXTRACT_AND_RUN=1 "$A" --cli info | head -3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.AppImage
+
+  publish:
+    needs: [windows, linux]
+    if: ${{ github.event_name == 'push' || inputs.tag != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.zip *.AppImage > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            PRE=""; case "$TAG" in *-*) PRE="--prerelease" ;; esac
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" $PRE --title "SBPC ${TAG#v}" \
+              --notes "Built automatically from $TAG. Downloads: Windows zip, Windows portable zip, Linux AppImage; checksums in SHA256SUMS.txt. This download contains no game data. SBPC is an independent fan project, not affiliated with, endorsed by or sponsored by Hudson Soft, Konami or Sega."
+          fi
+          gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"

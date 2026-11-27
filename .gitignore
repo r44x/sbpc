@@ -1,0 +1,51 @@
+# --- Never commit game data -------------------------------------------------
+# SBPC is bring-your-own-copy. Nothing derived from a disc may enter the repo.
+*.bin
+*.cue
+*.iso
+*.img
+*.ccd
+*.sub
+*.mds
+*.mdf
+*.chd
+*.wav
+*.7z
+*.zip
+*.rar
+*.bup
+*.bkr
+
+# Generated code and recompiled modules (derived from the user's disc)
+generated/
+*.sbpcmod
+
+# --- Build output -------------------------------------------------------------
+build/
+out/
+.vs/
+.vscode/
+.idea/
+*.user
+compile_commands.json
+
+# --- Repository layout ---------------------------------------------------------
+# games/: the user's dumps (only its README is committed)
+/games/*
+!/games/README.md
+# builds/: sbpc, sbpc-cli, sbpc-tcc and tcc/ (shipped as release artifacts, never committed)
+/builds/
+# recompiled/: built games, settings, saves and logs (derived from the user's disc)
+/recompiled/
+# Local notes and logs next to rebuild.bat
+/TO_TEST.md
+/rebuild.log
+/*.png
+
+# --- Runtime data (portable mode) --------------------------------------------
+data/
+portable.txt
+!/program/packaging/windows/portable.txt
+*.log
+*.jsonl
+crash-*.txt
